@@ -188,6 +188,22 @@
         }
     }
 
+    // Per-layer generation counter: whenever a layer's selected variant
+    // changes again before the previous change has finished loading, the
+    // in-flight (now stale) load must never win against the newer one --
+    // whichever finishes downloading/decoding LAST used to simply
+    // overwrite whatever the other one had already applied, so a layer
+    // cycled 3 times quickly could end up playing (and previewing) an
+    // earlier click instead of the latest one, purely by network timing.
+    // Bumping this per layer.id and having every in-flight task check
+    // "is my token still current?" before touching shared UI/audio state
+    // makes the latest change always win, regardless of completion order.
+    const layerToken = {};
+    function bumpLayerToken(id) {
+        layerToken[id] = (layerToken[id] || 0) + 1;
+        return layerToken[id];
+    }
+
     const audioBlobCache = new Map(); // cid -> Promise<objectURL>
     // `onProgress` only fires for the caller that actually triggers the
     // fetch (a cache miss); a second caller awaiting an already-in-flight
@@ -399,7 +415,14 @@
     // resolves from IPFS -- a real preview of the incoming mix, not just
     // a static per-layer icon, without making the indicator wait on a
     // network round trip before it can even appear.
-    function updateNowLoadingInfo(changedIds) {
+    //
+    // `tokens` (one per changed layer.id, from reloadAudioIfPlaying) gates
+    // the async image swap: if the same layer gets touched again before
+    // this probe resolves, its token is no longer current and the late
+    // image is dropped instead of overwriting the newer one -- otherwise
+    // cycling one layer's variant a few times quickly could leave the
+    // collage showing an earlier click's art instead of the latest.
+    function updateNowLoadingInfo(changedIds, tokens) {
         const ids = changedIds && changedIds.length ? changedIds : PANN_ASSETS.map(l => l.id);
         const layers = ids.map(id => PANN_ASSETS.find(l => l.id === id)).filter(Boolean);
         if (layers.length === 0) return;
@@ -410,6 +433,7 @@
                 const layer = layers[i % layers.length];
                 const selectionIndex = state.selections[layer.id];
                 const variant = selectionIndex !== undefined ? layer.variants[selectionIndex] : null;
+                const myToken = tokens ? tokens[layer.id] : undefined;
 
                 const cell = document.createElement('div');
                 cell.className = 'now-loading-thumb-cell';
@@ -418,7 +442,10 @@
 
                 if (variant && variant.visualCid) {
                     const probe = new Image();
-                    probe.onload = () => { cell.style.backgroundImage = `url("${probe.src}")`; };
+                    probe.onload = () => {
+                        if (myToken !== undefined && layerToken[layer.id] !== myToken) return; // superseded by a later click on this layer
+                        cell.style.backgroundImage = `url("${probe.src}")`;
+                    };
                     const candidates = buildCandidates(variant.visualCid);
                     let idx = 0;
                     probe.onerror = () => { idx++; if (idx < candidates.length) probe.src = candidates[idx]; };
@@ -447,9 +474,18 @@
             prefetchSelectedAudio(); // background warm-up, no loading UI
             return;
         }
-        updateNowLoadingInfo(changedIds);
+        // Bump a fresh token for every layer this reload touches, *before*
+        // anything async starts -- this makes the click order the single
+        // source of truth for "which change is the latest", so a layer
+        // cycled several times in quick succession always ends up on the
+        // last click's variant, no matter which of the overlapping loads
+        // happens to finish downloading/decoding first.
+        const ids = changedIds && changedIds.length ? changedIds : PANN_ASSETS.map(l => l.id);
+        const tokens = {};
+        ids.forEach(id => { tokens[id] = bumpLayerToken(id); });
+        updateNowLoadingInfo(changedIds, tokens);
         if (UI.nowLoading) UI.nowLoading.classList.remove('hidden');
-        await loadAudioStreams();
+        await loadAudioStreams(tokens);
         if (UI.nowLoading) UI.nowLoading.classList.add('hidden');
     }
 
@@ -953,7 +989,12 @@
     // per-CID cache bounds total bandwidth to whatever's actually been
     // explored -- a variant you've already heard costs nothing to return
     // to, whether from shuffle or a manual tile click.
-    async function loadAudioStreams() {
+    // `tokens` (optional, one per layer.id -- from reloadAudioIfPlaying)
+    // says which generation of that layer's change this call is loading
+    // for. Without it (the very first load, before anything is playing),
+    // each layer just gets a fresh token of its own here, which is fine
+    // since nothing can race with a load that hasn't started playing yet.
+    async function loadAudioStreams(tokens = {}) {
         const toLoad = [];
         PANN_ASSETS.forEach(layer => {
             const selectionIndex = state.selections[layer.id];
@@ -961,7 +1002,8 @@
             if (selectionIndex === undefined || !audioNode) return;
             const variant = layer.variants[selectionIndex];
             if (audioNode.dataset.loadedKey === variant.audioCid) return; // already on this variant
-            toLoad.push({ layer, variant, audioNode });
+            const token = tokens[layer.id] !== undefined ? tokens[layer.id] : bumpLayerToken(layer.id);
+            toLoad.push({ layer, variant, audioNode, token });
         });
 
         // Captured once, up front -- not per-node -- so every reloaded
@@ -995,10 +1037,18 @@
         };
         reportProgress();
 
-        const pending = toLoad.map(async ({ layer, variant, audioNode }) => {
+        const pending = toLoad.map(async ({ layer, variant, audioNode, token }) => {
             audioNode.dataset.loadedKey = variant.audioCid;
             const loader = mixTileLoaders[layer.id];
             const fill = mixTileFills[layer.id];
+            // True only while no *later* change to this same layer has
+            // started since this task began -- once a newer one has
+            // (layerToken[layer.id] moves on), this task's own result is
+            // stale and must never touch the audio node or its UI, no
+            // matter when its download/decode actually finishes. This is
+            // what makes the LATEST click always win, instead of whichever
+            // overlapping load happens to finish last.
+            const isCurrent = () => layerToken[layer.id] === token;
             if (loader) loader.classList.add('is-active');
             if (fill) fill.style.width = '0%';
 
@@ -1010,12 +1060,14 @@
             // download finished while playback still wasn't ready --
             // looked done, wasn't, exactly the "still loading" confusion.
             const onDownloadProgress = (frac) => {
+                if (!isCurrent()) return;
                 const scaled = frac * 0.92;
                 layerFrac[layer.id] = scaled;
                 if (fill) fill.style.width = `${Math.round(scaled * 100)}%`;
                 reportProgress();
             };
             const markReady = () => {
+                if (!isCurrent()) return;
                 layerFrac[layer.id] = 1;
                 if (fill) fill.style.width = '100%';
                 reportProgress();
@@ -1026,6 +1078,7 @@
             for (let attempt = 1; attempt <= ATTEMPTS && !ok; attempt++) {
                 try {
                     const objectUrl = await fetchAudioBlob(variant.audioCid, onDownloadProgress);
+                    if (!isCurrent()) break; // a newer click on this layer has already taken over
                     await new Promise((resolve, reject) => {
                         const canplayTimer = setTimeout(() => reject(new Error('canplay timed out')), 15000);
                         audioNode.onerror = () => { clearTimeout(canplayTimer); audioNode.onerror = null; reject(new Error('decode failed')); };
@@ -1033,6 +1086,7 @@
                         audioNode.src = objectUrl;
                         audioNode.load();
                     });
+                    if (!isCurrent()) break; // superseded while decoding -- don't resurrect an old variant
                     if (audioNode.duration > state.duration) {
                         state.duration = audioNode.duration;
                         if (UI.totalTimeEl) UI.totalTimeEl.textContent = formatTime(state.duration);
@@ -1042,14 +1096,18 @@
                     console.warn(`[Pann] Attempt ${attempt}/${ATTEMPTS} failed for ${layer.name} / ${variant.label}.`, e);
                 }
             }
-            if (!ok) {
+            if (!ok && isCurrent()) {
                 console.error(`[Pann] Giving up on ${layer.name} / ${variant.label} after ${ATTEMPTS} attempts -- it will stay silent.`);
                 delete audioNode.dataset.loadedKey;
             }
 
-            markReady(); // only ever hits 100% here -- once truly ready (or truly given up)
-            if (loader) loader.classList.remove('is-active');
-            return ok;
+            markReady(); // only ever hits 100% here -- once truly ready (or truly given up) -- no-op if superseded
+            if (isCurrent() && loader) loader.classList.remove('is-active');
+            // "applied" (not just "ok") is what the resume step below must
+            // check -- a load that succeeded but was superseded before it
+            // could finish must never be allowed to jump in and resume
+            // playback on its now-stale variant.
+            return { ok, applied: ok && isCurrent() };
         });
 
         const results = await Promise.all(pending);
@@ -1060,16 +1118,16 @@
         if (wasPlaying) {
             const masterTime = state.audioPool['strings'] ? state.audioPool['strings'].currentTime : 0;
             toLoad.forEach(({ audioNode }, i) => {
-                if (!results[i]) return; // this one failed -- leave it stopped, not out of sync
+                if (!results[i].applied) return; // failed, or superseded -- leave whatever's already playing alone
                 audioNode.currentTime = masterTime;
             });
             toLoad.forEach(({ audioNode }, i) => {
-                if (!results[i]) return;
+                if (!results[i].applied) return;
                 audioNode.play().catch(() => {});
             });
         }
 
-        return results;
+        return results.map(r => r.ok);
     }
 
     function enforceSync() {
