@@ -1,0 +1,676 @@
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+    /* Locks iOS viewport */
+    position: fixed; inset: 0; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: 'Inter', sans-serif;
+    overscroll-behavior: none;
+}
+
+h1, h2, h3 { font-family: 'Playfair Display', serif; }
+
+/* Perfect Scaling for Background vs Foreground */
+.background-container {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 1; pointer-events: none;
+}
+
+.artwork-wrapper {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 2; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+}
+
+/* THE ANIMATION FIX: Animates the container, NOT the images. Prevents iOS Crash.
+   All 9 layers are precisely-registered pieces of one composed scene (a
+   mountain/lotus tableau with small creatures and marks placed at fixed
+   spots per variant) -- moving them independently would misalign the
+   artwork, so the whole stack floats together rather than per-layer. It
+   breathes a little more while actually playing, as a quiet visual cue
+   that something is live, and settles down at rest. */
+.artwork-container {
+    position: relative;
+    width: 85vw; height: 85vw; max-width: 75vh; max-height: 75vh;
+    animation: floatArtwork 9s ease-in-out infinite;
+    transform: translateZ(0); /* Hardware acceleration */
+}
+body.playing .artwork-container { animation: floatArtworkPlaying 6s ease-in-out infinite; }
+
+@keyframes floatArtwork {
+    0%, 100% { transform: translateY(0px) scale(1); }
+    50% { transform: translateY(-10px) scale(1.012); }
+}
+@keyframes floatArtworkPlaying {
+    0%, 100% { transform: translateY(0px) scale(1); }
+    50% { transform: translateY(-16px) scale(1.03); }
+}
+
+/* Background is strictly COVER. It's the one full-bleed scene the other
+   8 layers sit on top of, so it gets its own slow Ken-Burns breathing
+   instead of the float/bob the overlays use -- a scale-only drift keeps
+   `cover` sizing safe (never reveals an edge) and never has to move in
+   the same direction as the layers above it. Only runs while playing. */
+.bg-layer-cover {
+    position: absolute; width: 100%; height: 100%;
+    object-fit: cover; opacity: 0; transition: opacity 1.5s ease;
+    transform-origin: center center;
+    animation: bgBreathe 42s ease-in-out infinite;
+    animation-play-state: paused;
+}
+body.playing .bg-layer-cover { animation-play-state: running; }
+
+@keyframes bgBreathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.045); }
+}
+
+/* Artwork layers are strictly CONTAIN */
+.layerImage {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain; opacity: 0; transition: opacity 1.5s ease;
+}
+
+.layer-visible { opacity: 1 !important; }
+
+/* UI Overlay */
+.ui-container {
+    position: absolute; inset: 0; z-index: 100;
+    pointer-events: none; display: flex; flex-direction: column;
+}
+
+.page {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: opacity 0.8s ease;
+}
+.page.active { opacity: 1; pointer-events: auto; }
+.hidden { display: none !important; }
+
+/* Gateway ------------------------------------------------------------- */
+/* NOTE: no `position` override on this ID. `.page` already sets
+   `position: absolute; inset: 0`, which is also the positioning context
+   the absolutely-positioned grid/scrim below need. Redeclaring position
+   here previously broke the page's full-screen sizing. */
+#gateway-page {
+    align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 35%, #17130f 0%, #080706 72%);
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 2rem;
+}
+
+/* Static mosaic of the nine per-layer cover photos. Fixed, not a
+   slideshow -- it's the piece's identity, not a distraction.
+   Sized in `vmin` and centered rather than stretched edge-to-edge: a
+   3x3 grid pinned to `inset: 0` on a wide monitor turns into very short,
+   wide cells that crop most of each square cover photo away. Capping it
+   to the shorter viewport dimension keeps every cell square and keeps
+   the actual artwork recognisable at any window size. */
+.gateway-grid {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 0;
+}
+.gateway-grid-inner {
+    width: 82vmin; height: 82vmin;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+    gap: 3px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 40px 120px rgba(0,0,0,0.6);
+}
+.gateway-grid-cell {
+    /* IPFS layer art is a mostly-transparent composite asset, not a
+       ready-made square thumbnail -- "contain" shows the whole piece
+       instead of a "cover" crop into a random corner. */
+    background-color: #17130f;
+    background-size: contain; background-repeat: no-repeat; background-position: center;
+    filter: saturate(0.55) brightness(0.42);
+}
+
+.gateway-scrim {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(180deg, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.8) 45%, rgba(0,0,0,0.94) 100%);
+}
+
+.gateway-content { position: relative; z-index: 2; max-width: 600px; text-align: center; display: flex; flex-direction: column; gap: 1.75rem; pointer-events: auto; }
+.gateway-content h1 { font-size: 4rem; letter-spacing: 2px; text-shadow: 0 4px 16px rgba(0,0,0,0.9); }
+.description-container { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.description { font-size: 0.85rem; line-height: 1.65; color: #e2e2e2; text-shadow: 0 1px 6px rgba(0,0,0,0.9); }
+.text-link { background: none; border: none; color: #fff; text-decoration: underline; cursor: pointer; font-family: 'Inter'; }
+.text-link.subtle { color: #999; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; text-decoration: none; }
+.text-link.subtle:hover { color: #fff; }
+
+.primary-btn {
+    background: #fff; color: #000; border: none; padding: 1rem 2rem;
+    font-family: 'Inter', sans-serif; text-transform: uppercase; letter-spacing: 2px;
+    font-size: 0.85rem; cursor: pointer; border-radius: 0; box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.primary-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.7); }
+.primary-btn:active { transform: translateY(0); }
+
+.secondary-btn {
+    background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.25);
+    padding: 1rem 1.5rem; font-family: 'Inter', sans-serif; text-transform: uppercase; letter-spacing: 1.5px;
+    font-size: 0.8rem; cursor: pointer; border-radius: 0; transition: background 0.15s ease, border-color 0.15s ease;
+}
+.secondary-btn:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.45); }
+
+.artists-section { margin-top: 0.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,0.12); display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+.gateway-tags {
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+    max-height: 140px; overflow-y: auto; padding: 4px 2px;
+}
+.gateway-tags .tag { font-size: 0.7rem; color: #ccc; text-transform: uppercase; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
+
+/* Player Page ----------------------------------------------------------*/
+#player-page { justify-content: space-between; }
+.player-top-left {
+    padding: max(20px, env(safe-area-inset-top)) 20px 20px;
+    pointer-events: none; position: relative; z-index: 3;
+    display: flex; align-items: baseline; gap: 16px;
+}
+.wordmark-btn {
+    pointer-events: auto;
+    background: none; border: none; cursor: pointer;
+    font-family: 'Playfair Display', serif; font-size: 1.1rem; letter-spacing: 1px;
+    color: rgba(255,255,255,0.85); text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+    padding: 4px 0; transition: color 0.2s ease, opacity 0.2s ease;
+}
+.wordmark-btn:hover { color: #fff; }
+body.playing .wordmark-btn { opacity: 0.55; }
+body.playing .wordmark-btn:hover { opacity: 1; }
+.player-gallery-link {
+    pointer-events: auto;
+    background: none; border: none; cursor: pointer;
+    font-family: 'Inter', sans-serif; font-size: 0.7rem; font-weight: 400;
+    text-transform: uppercase; letter-spacing: 1.5px; text-decoration: none;
+    color: rgba(255,255,255,0.6); text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+    padding: 4px 0; align-self: center;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+.player-gallery-link:hover { color: #fff; }
+body.playing .player-gallery-link { opacity: 0.55; }
+body.playing .player-gallery-link:hover { opacity: 1; }
+
+/* Now-playing corner: no panel behind it -- just text over the artwork,
+   held legible with a shadow instead of a background box. Collapsed to
+   the info icon alone until tapped open, so it doesn't compete with the
+   artwork by default. */
+.player-top-right {
+    position: absolute; z-index: 3;
+    top: max(20px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+    pointer-events: none;
+}
+.player-top-right .icon-btn { pointer-events: auto; }
+.now-playing-row { display: flex; align-items: center; gap: 4px; pointer-events: auto; }
+#quickSaveBtn.is-saved, #saveMixBtn.is-saved { background: rgba(120,220,140,0.35); }
+.now-playing-title {
+    font-family: 'Playfair Display', serif; font-size: 0.95rem; color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+    max-width: 42vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-right: 4px;
+}
+
+/* Inline "loading next" indicator -- sits under the title/tags while a
+   shuffle or tile change fetches new stems while already playing (the
+   mix grid isn't visible then, so this is the only feedback shown).
+   The first load, before playback has ever started, uses the thin
+   per-tile loading bar on the mix grid instead (.mix-tile-loader below). */
+.now-loading {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+    pointer-events: none; margin-top: 2px;
+}
+.now-loading-row { display: flex; align-items: center; gap: 6px; }
+.now-loading-thumb {
+    width: 44px; height: 44px; border-radius: 5px; overflow: hidden; flex-shrink: 0;
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+.now-loading-thumb-cell { background-size: cover; background-position: center; }
+.now-loading-info { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.now-loading-text {
+    font-size: 11px; color: rgba(255,255,255,0.65); letter-spacing: 0.02em;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+}
+.now-loading-bar {
+    width: 90px; height: 2px; background: rgba(255,255,255,0.18); border-radius: 1px; overflow: hidden;
+}
+.now-loading-fill {
+    height: 100%; width: 0%; background: rgba(255,255,255,0.8); transition: width 0.25s ease;
+}
+.now-loading-changes {
+    font-size: 10px; color: rgba(255,255,255,0.5); letter-spacing: 0.02em;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+    max-width: 200px; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Mix / selection overlay -----------------------------------------------
+   Sits on top of the artwork. Open before the first Play, and again
+   whenever playback is paused or stopped, so the mix can be adjusted
+   without losing the visual context of what's currently selected. */
+.mix-overlay {
+    position: absolute; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    background: rgba(6,6,8,0.45);
+    -webkit-backdrop-filter: blur(28px) saturate(1.1);
+    backdrop-filter: blur(28px) saturate(1.1);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.45s ease;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.mix-overlay.open { opacity: 1; pointer-events: auto; }
+
+.mix-overlay-inner {
+    width: 100%; max-width: 1160px;
+    display: flex; flex-direction: column;
+    margin: auto;
+}
+
+/* Two columns while picking layers: the tile grid on the left, a live
+   preview of the actual composited artwork on the right, so choices show
+   their effect immediately instead of only after closing the overlay.
+   Both columns share the same fr unit, so they're the same WIDTH -- that's
+   the "same scale" that matters here. Stretching the preview to also
+   match the grid's exact height (tried, then undone) forced the square
+   artwork into a tall rectangle and cropped it badly; a plain, undistorted
+   square reads as the same piece of art the tiles built, which a warped
+   one didn't. Flat, square-edged throughout: no rounded corners. */
+.mix-layout {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(1.5rem, 4vw, 3rem);
+    align-items: start;
+    width: 100%;
+}
+
+.mix-selector-col { display: flex; flex-direction: column; min-width: 0; }
+
+.mix-preview-col {
+    display: flex; flex-direction: column; gap: 0.75rem;
+    position: sticky; top: 0;
+    align-self: center; /* centered against the taller tile grid beside it, not pinned to its top */
+}
+
+/* Editable mix name, sitting directly above the composited preview -- an
+   input styled to look like plain text until focused, so naming a mix
+   feels like part of the artwork rather than a form field. */
+.preview-titlebar { display: flex; align-items: center; gap: 8px; }
+.mix-title-input {
+    flex: 1; min-width: 0; background: transparent; border: none; border-bottom: 1px solid transparent;
+    color: #fff; font-family: 'Playfair Display', serif; font-size: clamp(1rem, 1.6vw, 1.3rem);
+    padding: 2px 0 6px; outline: none; border-radius: 0;
+    transition: border-color 0.15s ease;
+}
+.mix-title-input::placeholder { color: rgba(255,255,255,0.5); }
+.mix-title-input:hover { border-bottom-color: rgba(255,255,255,0.25); }
+.mix-title-input:focus { border-bottom-color: rgba(255,255,255,0.6); }
+
+.formation-preview {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    background: #050505;
+    border: 1px solid rgba(255,255,255,0.14);
+}
+.preview-layer-slot { position: absolute; inset: 0; }
+.formation-preview img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+}
+.formation-preview img.layer-visible { opacity: 1; }
+
+.mix-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: clamp(6px, 1vw, 10px);
+}
+
+/* The cover photo gets its own full square, untouched by any text; the
+   caption sits below it as plain text, no card/box behind either -- the
+   mix overlay's own dark blurred backdrop is what keeps it readable. */
+.mix-tile {
+    display: flex; flex-direction: column;
+}
+
+.mix-tile-image {
+    position: relative;
+    width: 100%; aspect-ratio: 1 / 1;
+    background-color: #17130f;
+    background-size: contain; background-repeat: no-repeat; background-position: center;
+    flex-shrink: 0; cursor: pointer;
+    outline: 1px solid rgba(255,255,255,0.14);
+    outline-offset: -1px;
+    transition: outline-color 0.15s ease, filter 0.15s ease;
+}
+.mix-tile-image:hover { outline-color: rgba(255,255,255,0.5); }
+.mix-tile-image:active { filter: brightness(0.9); }
+.mix-tile-image:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+
+/* A locked layer visibly steps back -- shuffle will never touch it, so it
+   reads as "settled" rather than "selectable" the way the others do. */
+.mix-tile-image.is-locked { outline: 1px solid rgba(255,214,120,0.7); outline-offset: -1px; }
+
+.mix-tile-lock {
+    position: absolute; top: 6px; right: 6px; z-index: 1;
+    width: 24px; height: 24px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.45); border: none; cursor: pointer;
+    opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+}
+.mix-tile-image:hover .mix-tile-lock,
+.mix-tile-image:focus-within .mix-tile-lock,
+.mix-tile-lock.is-locked {
+    opacity: 1;
+}
+.mix-tile-lock:hover { background: rgba(0,0,0,0.7); }
+.mix-tile-lock.is-locked { background: rgba(255,180,40,0.85); }
+
+.mix-tile-text {
+    display: flex; flex-direction: column;
+    padding: clamp(6px, 0.9vw, 10px) 2px 0;
+    text-align: left;
+}
+.mix-tile-heading { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.mix-tile-name { font-family: 'Playfair Display', serif; font-size: clamp(0.78rem, 1.4vw, 0.98rem); color: #fff; line-height: 1.2; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-tile-subtitle { font-size: clamp(0.55rem, 0.95vw, 0.66rem); color: #fff; opacity: 0.9; font-style: italic; text-transform: lowercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-tile-variant { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; margin-top: 3px; }
+.mix-tile-variant span:first-child { font-size: clamp(0.62rem, 1.05vw, 0.78rem); color: #fff; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mix-tile-count { font-size: clamp(0.54rem, 0.85vw, 0.66rem); color: #fff; opacity: 0.85; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+.mix-tile-credit {
+    font-size: clamp(0.52rem, 0.8vw, 0.64rem); color: #fff; opacity: 0.78; line-height: 1.3;
+    margin-top: 3px;
+}
+
+.mix-actions { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem; }
+
+/* First-load progress -- a real, obvious 0-100% bar shown ABOVE the
+   Shuffle/Gallery/Play row while the initial mix downloads (Play itself
+   is disabled meanwhile, its label swapped to the percentage). Shuffle
+   and Gallery are deliberately left alone: Gallery in particular is the
+   escape hatch if a download ever stalls -- nothing about loading is
+   ever allowed to make the mix overlay unusable, since it covers the
+   whole page while open. */
+.overlay-loading {
+    display: flex; align-items: center; gap: 12px; margin-top: 1.5rem;
+}
+.overlay-loading-bar {
+    flex: 1; height: 8px; background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden;
+}
+.overlay-loading-fill {
+    height: 100%; width: 0%; background: #fff; transition: width 0.15s linear;
+}
+.overlay-loading-text {
+    font-size: 14px; color: rgba(255,255,255,0.9); letter-spacing: 0.02em;
+    min-width: 50px; text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* Now-playing tags ---------------------------------------------------------
+   No panel behind these -- they sit directly over the artwork in the top
+   right, held legible with a text-shadow instead of a background box.
+   Collapsed to nothing by default; the info icon toggles the list open. */
+.tags-stack {
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
+    max-height: 0; opacity: 0; overflow: hidden;
+    transition: max-height 0.35s ease, opacity 0.25s ease;
+    pointer-events: none;
+}
+#active-tags.expanded {
+    max-height: min(60vh, 480px); opacity: 1; overflow-y: auto; pointer-events: auto;
+    margin-top: 4px;
+}
+
+.playing-tag {
+    display: flex; flex-direction: column; align-items: flex-end;
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 1px 10px rgba(0,0,0,0.8);
+}
+.playing-tag-credit {
+    font-size: 0.6rem; letter-spacing: 0.5px; text-transform: none; color: rgba(255,255,255,0.85);
+    margin-top: 1px;
+}
+
+.icon-btn.small { width: 32px; height: 32px; background: rgba(0,0,0,0.28); }
+.icon-btn.small:hover { background: rgba(0,0,0,0.45); }
+
+.player-bottom {
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    pointer-events: auto; display: flex; justify-content: center;
+    position: relative; z-index: 3;
+}
+
+/* No boxed panel -- the transport floats directly over the artwork.
+   Individual controls (progress track, icon-button hover circles) carry
+   just enough of their own translucency to stay usable; there's no
+   container background/border/shadow behind the whole dock anymore. */
+.control-panel {
+    width: 100%; max-width: 820px;
+    display: flex; flex-direction: column; gap: 1rem;
+    padding: 0 0.5rem;
+}
+
+.transport-dock { width: 100%; display: flex; flex-direction: column; gap: 1.1rem; }
+.progress-wrapper { display: flex; align-items: center; gap: 1rem; font-size: 0.75rem; font-variant-numeric: tabular-nums; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }
+.progress-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.25); overflow: hidden; cursor: pointer; position: relative; box-shadow: 0 1px 6px rgba(0,0,0,0.5); }
+.progress-bar:hover { background: rgba(255,255,255,0.35); }
+.progress-fill { height: 100%; width: 0%; background: #fff; pointer-events: none; transition: width 0.1s linear; }
+
+.buttons-row { display: flex; justify-content: center; gap: 1.5rem; align-items: center; flex-wrap: wrap; }
+/* A plain <button> is an inline-block with baseline-aligned content, so an
+   SVG inside it (even a perfectly square one) leaves an uneven sliver of
+   line-height below it -- that's what was skewing the hover/active circle
+   into an oval. Flex-centering with a fixed box removes that sliver, so
+   the circle is always a true circle regardless of which icon is inside. */
+.icon-btn {
+    background: transparent; border: none; cursor: pointer;
+    width: 44px; height: 44px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; flex-shrink: 0;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+.icon-btn:hover { background: rgba(0,0,0,0.25); }
+.icon-btn:active { transform: scale(0.9); }
+.icon-btn:focus-visible { outline: 1px solid rgba(255,255,255,0.8); outline-offset: 2px; }
+/* No background panel sits behind these anymore, so the icons themselves
+   need to hold up against whatever artwork is behind them. */
+.icon-btn svg { display: block; filter: drop-shadow(0 1px 4px rgba(0,0,0,0.85)); }
+
+/* Per-tile loading bar -- a real, determinate 0-100% fill along the
+   bottom edge of a mix-grid tile's cover art while that layer's stem is
+   being fetched (first load, or a background prefetch while still
+   browsing the grid before Play). Width is set directly from actual
+   download progress (see fetchBlobAsObjectUrl), not an animation guess.
+   Doesn't cover the artwork; invisible and non-interactive until
+   .is-active. */
+.mix-tile-loader {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    height: 3px; background: rgba(255,255,255,0.18);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+}
+.mix-tile-loader.is-active { opacity: 1; }
+.mix-tile-loader-fill {
+    height: 100%; width: 0%; background: rgba(255,255,255,0.9);
+    transition: width 0.15s linear;
+}
+
+/* Volume ------------------------------------------------------------- */
+.volume-control { display: flex; align-items: center; gap: 6px; margin-left: 4px; }
+.volume-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 80px; height: 4px; background: rgba(255,255,255,0.3);
+    outline: none; cursor: pointer;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7));
+}
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer;
+}
+.volume-slider::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: #fff; cursor: pointer; }
+
+/* Enlarged formation preview (lightbox) -------------------------------*/
+.preview-lightbox {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.88);
+    display: flex; align-items: center; justify-content: center;
+    padding: 4vmin;
+    cursor: zoom-out;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+.preview-lightbox.open { opacity: 1; pointer-events: auto; }
+.lightbox-stage {
+    position: relative;
+    width: min(88vmin, 88vw, 88vh);
+    aspect-ratio: 1 / 1;
+    background: #050505;
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 40px 120px rgba(0,0,0,0.7);
+}
+.lightbox-stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* Saved-mixes gallery -------------------------------------------------*/
+#gallery-page { background: #070605; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* Whatever artwork was on screen when the gallery was opened, softened
+   into a backdrop rather than left on a flat black page -- scaled up
+   slightly so the heavy blur never reveals a sharp edge, and dimmed by
+   the scrim on top so the card text and thumbnails stay legible. */
+.gallery-bg {
+    position: absolute; inset: 0; z-index: 0; overflow: hidden;
+    filter: blur(60px) saturate(1.05) brightness(0.5);
+    transform: scale(1.2);
+    pointer-events: none;
+}
+.gallery-bg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.gallery-scrim {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(180deg, rgba(7,6,5,0.55) 0%, rgba(7,6,5,0.82) 60%, rgba(7,6,5,0.94) 100%);
+    pointer-events: none;
+}
+.gallery-header, .gallery-body { position: relative; z-index: 2; }
+
+.gallery-header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+    padding: max(20px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px max(24px, env(safe-area-inset-left));
+}
+.gallery-header-left { display: flex; align-items: baseline; gap: 16px; }
+.gallery-title { font-size: 1.1rem; font-weight: 400; letter-spacing: 0.5px; color: rgba(255,255,255,0.85); }
+.gallery-tabs { display: flex; gap: 4px; pointer-events: auto; }
+.gallery-tab {
+    background: none; border: none; cursor: pointer; color: rgba(255,255,255,0.55);
+    font-family: 'Inter', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px;
+    padding: 8px 12px;
+}
+.gallery-tab.is-active { color: #fff; border-bottom: 2px solid #fff; }
+
+.gallery-body {
+    padding: 12px max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+    pointer-events: auto;
+    max-width: 1440px; margin: 0 auto; width: 100%;
+}
+.gallery-empty { color: rgba(255,255,255,0.6); font-size: 0.9rem; padding: 3rem 0; text-align: center; }
+.gallery-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+    gap: clamp(1rem, 2.5vw, 1.75rem);
+}
+.gallery-card { display: flex; flex-direction: column; gap: 6px; }
+.gallery-card-thumb {
+    position: relative; width: 100%; aspect-ratio: 1 / 1;
+    overflow: hidden; background: #050505; border: 1px solid rgba(255,255,255,0.14);
+    cursor: pointer;
+}
+.gallery-card-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.gallery-card-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.gallery-card-name-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+.gallery-card-name { font-size: 0.8rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gallery-name-input {
+    flex: 1; min-width: 0; background: transparent; color: #fff; font-family: 'Inter', sans-serif;
+    font-size: 0.8rem; border: none; border-bottom: 1px solid rgba(255,255,255,0.5); padding: 0 0 2px; outline: none;
+}
+.gallery-card-date { font-size: 0.65rem; color: rgba(255,255,255,0.55); white-space: nowrap; }
+.gallery-card-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.gallery-card-actions .secondary-btn { padding: 6px 14px; font-size: 0.7rem; }
+.gallery-favorite-btn, .gallery-delete-btn, .gallery-edit-btn, .gallery-info-btn {
+    background: none; border: none; cursor: pointer; color: rgba(255,255,255,0.7);
+    width: 28px; height: 28px; padding: 0; border-radius: 0; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.gallery-favorite-btn:hover, .gallery-edit-btn:hover, .gallery-info-btn:hover { color: #fff; }
+.gallery-favorite-btn.is-favorite svg { fill: #ffcf4d; }
+.gallery-delete-btn:hover { background: rgba(220,60,50,0.35); color: #fff; }
+
+/* Modals (save-name prompt, mix info) ----------------------------------
+   Same flat, no-radius language as the rest of the UI -- a dark scrim
+   with a single square panel, no card chrome beyond a hairline border. */
+.modal-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(0,0,0,0.72);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.modal-overlay.open { opacity: 1; pointer-events: auto; }
+.modal-box {
+    width: 100%; max-width: 420px;
+    background: #0c0b0a; border: 1px solid rgba(255,255,255,0.16);
+    box-shadow: 0 40px 120px rgba(0,0,0,0.7);
+    padding: 1.75rem; display: flex; flex-direction: column; gap: 1rem;
+    max-height: 80vh; overflow-y: auto;
+}
+.modal-heading { font-size: 1.1rem; font-weight: 400; color: #fff; }
+.modal-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal-subtext { font-size: 0.75rem; color: rgba(255,255,255,0.55); margin-top: -0.5rem; }
+.modal-input {
+    width: 100%; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.25);
+    color: #fff; font-family: 'Inter', sans-serif; font-size: 0.9rem; padding: 0.75rem 0.9rem;
+    outline: none; border-radius: 0;
+}
+.modal-input:focus { border-color: rgba(255,255,255,0.55); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; }
+.modal-layer-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.modal-layer-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.8rem; }
+.modal-layer-name { color: #fff; }
+.modal-layer-name span { color: rgba(255,255,255,0.5); font-style: italic; margin-left: 4px; font-size: 0.72rem; }
+.modal-layer-variant { color: rgba(255,255,255,0.7); text-align: right; }
+.modal-layer-credit { display: block; font-size: 0.68rem; color: rgba(255,255,255,0.45); text-align: right; }
+
+@media (max-width: 860px) {
+    /* Preview stacks above the picker instead of sitting beside it, so a
+       narrow viewport still shows both without either being squeezed.
+       Single column now, so the two no longer share a grid row to stretch
+       against -- give the preview back an explicit square here. */
+    .mix-layout { grid-template-columns: 1fr; }
+    .mix-preview-col { order: -1; margin: 0 auto 1rem; width: min(100%, 320px); }
+    .formation-preview { flex: none; aspect-ratio: 1 / 1; }
+}
+
+@media (max-width: 768px) {
+    .gateway-content h1 { font-size: 3rem; }
+    .buttons-row { gap: 1.25rem; }
+    .control-panel { padding: 1rem; }
+    .mix-actions { flex-direction: column; }
+    .mix-actions button { width: 100%; }
+    .mix-overlay { padding: 14px; }
+    .mix-overlay-inner { padding-bottom: 1rem; }
+}
+
+@media (max-width: 420px) {
+    .mix-preview-col { width: min(100%, 220px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .artwork-container, body.playing .artwork-container { animation: none; }
+    .bg-layer-cover { animation: none; }
+    .mix-tile { transition: none; }
+}

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Pann</title>
+    <meta name="description" content="பண் -- a programmable, ever-changing piece of music by Pradeep Kumar.">
+    <meta name="theme-color" content="#17130f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Pann">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Playfair+Display:ital,wght@0,400;0,600&display=swap" rel="stylesheet">
+    <script>
+        // Registers the app-shell-only service worker (see sw.js) so the
+        // browser offers "Install app" / "Add to Home Screen" and the
+        // page keeps opening offline after the first visit. It never
+        // touches audio/image requests -- see sw.js's own comment for why.
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("sw.js").catch(() => {
+                // Installability just won't be offered; the player itself
+                // works fine either way.
+            });
+        }
+    </script>
+</head>
+<body>
+    <!-- Background (Full screen strings) -->
+    <div id="player-bg" class="background-container"></div>
+
+    <!-- Artwork (Grouped floating container for safe animation) -->
+    <div class="artwork-wrapper">
+        <div id="layer-container" class="artwork-container"></div>
+    </div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer" class="ui-container">
+
+        <!-- Gateway Page -->
+        <div id="gateway-page" class="page active">
+            <div id="gateway-grid" class="gateway-grid">
+                <div id="gateway-grid-inner" class="gateway-grid-inner"></div>
+            </div>
+            <div class="gateway-scrim"></div>
+            <div class="gateway-content">
+                <h1>Pann</h1>
+                <div class="description-container">
+                    <p class="description">
+                        The seed of all melodies, "பண்" is the truest representation of Tamil music, culture, land and its people. A voyage that connects the past, beholds the present and accompanies into the future, Pann is the beginning of a journey into the world of performed, programmable art.
+                        <span id="moreText" class="hidden">This 30-minute piece of music written in Tamil, was commissioned and produced by Metapurse and is a first of its kind NFT from India. It had its premiere in New York’s Terminal 5 on the 4th of November 2021 at Dreamverse, the world’s largest NFT exhibition curated by Metapurse. Pann became the ambient music for this historic event that merged the physical and digital realms for the first time, showcasing the pinnacle of NFT art of more than 150 artists from around the world. Woven from nine layers of music, each having several variants within it, the Pann master track captures a fresh collaborative performance of 40 musicians and visual artists. It can be heard in 19440 different combinations, making it a dynamic piece of music with artwork done by Susha, Ghana N B and Vidhya Vijay that evolve along with every changing state of music. While most of the variants were recorded at 2barQ Studios, Chennai, Tamil Nadu by Sujith Sreedhar and Divine Joseph, the cherry on the cake is the live performance of some of the musical and art variants captured during the Dreamverse experience.</span>
+                    </p>
+                    <button id="learnMoreBtn" class="text-link">Learn more</button>
+                </div>
+                <!-- This button unlocks Safari Audio instantly -->
+                <button id="enterBtn" class="primary-btn">Enter the Canvas</button>
+                <div class="artists-section">
+                    <button id="creditsBtn" class="text-link subtle">Credits — 41 artists</button>
+                    <div id="artists-container" class="gateway-tags hidden"></div>
+                    <button id="galleryNavBtn" class="text-link subtle">Gallery</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Saved-mixes gallery -->
+        <div id="gallery-page" class="page hidden">
+            <div id="gallery-bg" class="gallery-bg"></div>
+            <div class="gallery-scrim"></div>
+            <div class="gallery-header">
+                <div class="gallery-header-left">
+                    <button id="galleryBackBtn" class="wordmark-btn">Pann</button>
+                    <h2 class="gallery-title">Gallery</h2>
+                </div>
+                <div class="gallery-tabs">
+                    <button id="galleryTabAll" class="gallery-tab is-active" type="button">All</button>
+                    <button id="galleryTabFavorites" class="gallery-tab" type="button">Favorites</button>
+                </div>
+            </div>
+            <div class="gallery-body">
+                <div id="gallery-grid" class="gallery-grid"></div>
+                <p id="gallery-empty" class="gallery-empty hidden">No saved mixes yet -- press Save on a mix you like and it'll show up here.</p>
+            </div>
+        </div>
+
+        <!-- Player Page -->
+        <div id="player-page" class="page hidden">
+            <!-- Wordmark top-left -->
+            <div class="player-top-left">
+                <button id="backToGatewayBtn" class="wordmark-btn">Pann</button>
+                <button id="galleryPlayerBtn" class="player-gallery-link">Gallery</button>
+            </div>
+
+            <!-- Now playing: floats over the artwork with no background box,
+                 collapsed to just the info icon until tapped open. -->
+            <div class="player-top-right">
+                <div class="now-playing-row">
+                    <span id="nowPlayingTitle" class="now-playing-title"></span>
+                    <button id="quickSaveBtn" class="icon-btn small" aria-label="Save this mix to the gallery">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="white"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H6V5h9v4z"/></svg>
+                    </button>
+                    <button id="infoToggleBtn" class="icon-btn small" aria-label="Show what's playing">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="white"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
+                    </button>
+                </div>
+                <div id="active-tags" class="tags-stack"></div>
+                <div id="now-loading" class="now-loading hidden">
+                    <div class="now-loading-row">
+                        <div id="nowLoadingThumb" class="now-loading-thumb"></div>
+                        <div class="now-loading-info">
+                            <span id="nowLoadingText" class="now-loading-text">Loading next</span>
+                            <div class="now-loading-bar"><div id="nowLoadingFill" class="now-loading-fill"></div></div>
+                        </div>
+                    </div>
+                    <span id="nowLoadingChanges" class="now-loading-changes"></span>
+                </div>
+            </div>
+
+            <!-- Mix / selection overlay: shown before the first Play, and again on pause/stop -->
+            <div id="mix-overlay" class="mix-overlay">
+                <div class="mix-overlay-inner">
+                    <div class="mix-layout">
+                        <div class="mix-selector-col">
+                            <div id="mix-grid" class="mix-grid"></div>
+                        </div>
+                        <div class="mix-preview-col">
+                            <div class="preview-titlebar">
+                                <input id="mixTitleInput" class="mix-title-input" type="text" maxlength="60" spellcheck="false" autocomplete="off" aria-label="Name this mix">
+                                <button id="saveMixBtn" class="icon-btn small" aria-label="Save this mix to the gallery">
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="white"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm-5 16a3 3 0 110-6 3 3 0 010 6zm3-10H6V5h9v4z"/></svg>
+                                </button>
+                            </div>
+                            <div id="formation-preview" class="formation-preview" role="button" tabindex="0" aria-label="Enlarge this preview"></div>
+                            <div id="overlay-loading" class="overlay-loading hidden">
+                                <div class="overlay-loading-bar"><div id="overlayLoadingFill" class="overlay-loading-fill"></div></div>
+                                <span id="overlayLoadingText" class="overlay-loading-text">0%</span>
+                            </div>
+                            <div class="mix-actions">
+                                <button id="shuffleAllBtn" class="secondary-btn">Shuffle</button>
+                                <button id="galleryOverlayBtn" class="secondary-btn">Gallery</button>
+                                <button id="overlayStopBtn" class="secondary-btn hidden">Stop</button>
+                                <button id="overlayPlayBtn" class="primary-btn">Play</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Minimal performance dock: no background box -- just the
+                 progress bar and buttons floating directly over the artwork. -->
+            <div class="player-bottom">
+                <div class="control-panel">
+                    <div class="transport-dock">
+                        <div class="progress-wrapper">
+                            <span id="current-time">0:00</span>
+                            <div id="progressBar" class="progress-bar">
+                                <div id="progress-fill" class="progress-fill"></div>
+                            </div>
+                            <span id="total-time">0:00</span>
+                        </div>
+                        <div class="buttons-row">
+                            <button id="layersBtn" class="icon-btn" aria-label="Change layers">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                            </button>
+                            <button id="seekBackBtn" class="icon-btn" aria-label="Back 10 seconds">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M12 5V1L7 6l5 5V7a6 6 0 11-6 6H5a8 8 0 108-8z"/></svg>
+                            </button>
+                            <button id="playPauseBtn" class="icon-btn" aria-label="Play or pause">
+                                <svg id="icon-play" viewBox="0 0 24 24" width="28" height="28" fill="white"><path d="M8 5v14l11-7z"/></svg>
+                                <svg id="icon-pause" class="hidden" viewBox="0 0 24 24" width="28" height="28" fill="white"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                            </button>
+                            <button id="seekFwdBtn" class="icon-btn" aria-label="Forward 10 seconds">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M12 5V1l5 5-5 5V7a6 6 0 106 6h2a8 8 0 11-8-8z"/></svg>
+                            </button>
+                            <button id="stopBtn" class="icon-btn" aria-label="Stop">
+                                <svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M6 6h12v12H6z"/></svg>
+                            </button>
+                            <button id="mixBtn" class="icon-btn" aria-label="Shuffle, continuing from current mix">
+                                <svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+                            </button>
+                            <div class="volume-control">
+                                <button id="muteBtn" class="icon-btn" aria-label="Mute">
+                                    <svg id="icon-vol-on" viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2A4.5 4.5 0 0014 7.97v8.05a4.48 4.48 0 002.5-4.02zM14 3.23v2.06a7 7 0 010 13.42v2.06a9 9 0 000-17.54z"/></svg>
+                                    <svg id="icon-vol-off" class="hidden" viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M16.5 12A4.5 4.5 0 0014 7.97v2.21l2.45 2.45c.03-.2.05-.42.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0021 12a8.94 8.94 0 00-7-8.77v2.06a7 7 0 015 8.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 003.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                                </button>
+                                <input id="volumeSlider" class="volume-slider" type="range" min="0" max="100" value="100" aria-label="Volume">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Enlarged formation preview -->
+    <div id="preview-lightbox" class="preview-lightbox hidden">
+        <div id="lightbox-stage" class="lightbox-stage"></div>
+    </div>
+
+    <!-- Save-to-gallery: name-this-mix prompt -->
+    <div id="name-mix-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 class="modal-heading">Save to Gallery</h3>
+            <input id="nameMixInput" class="modal-input" type="text" maxlength="60" spellcheck="false" autocomplete="off" aria-label="Mix name">
+            <div class="modal-actions">
+                <button id="nameMixCancelBtn" class="secondary-btn" type="button">Cancel</button>
+                <button id="nameMixSaveBtn" class="primary-btn" type="button">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gallery card details -->
+    <div id="mix-info-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <div class="modal-header-row">
+                <h3 id="mixInfoTitle" class="modal-heading"></h3>
+                <button id="mixInfoCloseBtn" class="icon-btn small" aria-label="Close">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="white"><path d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"/></svg>
+                </button>
+            </div>
+            <p id="mixInfoDate" class="modal-subtext"></p>
+            <div id="mixInfoLayers" class="modal-layer-list"></div>
+        </div>
+    </div>
+
+    <script src="data.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
