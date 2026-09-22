@@ -24,6 +24,20 @@
                 // Installability just won't be offered; the player itself
                 // works fine either way.
             });
+            // sw.js is now network-first (see its own comment), so once an
+            // updated version has actually taken over, every fetch is
+            // fresh from here on -- but a tab that was already open before
+            // that switch may still be holding JS/CSS it fetched under the
+            // OLD (cache-first) service worker. Reloading once, the first
+            // time a new service worker takes control, guarantees nobody
+            // is left running stale code after a deploy without having to
+            // know to manually clear site data.
+            let refreshedOnce = false;
+            navigator.serviceWorker.addEventListener("controllerchange", () => {
+                if (refreshedOnce) return;
+                refreshedOnce = true;
+                window.location.reload();
+            });
         }
     </script>
 </head>

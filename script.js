@@ -59,6 +59,36 @@
         if (next) next();
     }
 
+    // Separate, much smaller concurrency gate for the "hand a downloaded
+    // blob to an <audio> element and wait for it to become playable" step
+    // (below, in loadAudioStreams) -- this is a different resource than
+    // the network-fetch gate above. iOS/WebKit appears to only actively
+    // prepare a handful of concurrent <audio> elements at once; with all
+    // 9 layers calling .load() and waiting on 'canplay' at the same
+    // instant, the ones past that limit never get their decode started,
+    // so their promise never settles -- seen as "stuck at 92%" forever
+    // (92% being exactly where the download-progress math caps out,
+    // reserving the last 8% for this decode step). Limiting how many
+    // elements attempt this at once keeps every layer within whatever
+    // iOS's real limit is, instead of racing all 9 against it.
+    const MAX_CONCURRENT_DECODES = 3;
+    let activeDecodes = 0;
+    const decodeQueue = [];
+    function acquireDecodeSlot() {
+        return new Promise((resolve) => {
+            const tryGo = () => {
+                if (activeDecodes < MAX_CONCURRENT_DECODES) { activeDecodes++; resolve(); }
+                else decodeQueue.push(tryGo);
+            };
+            tryGo();
+        });
+    }
+    function releaseDecodeSlot() {
+        activeDecodes--;
+        const next = decodeQueue.shift();
+        if (next) next();
+    }
+
     // Assigns candidates to a media/img element and cascades through them
     // on error OR on a stall timeout (some gateways hang instead of
     // erroring), calling onReady once one actually loads, or onGiveUp if
@@ -1214,13 +1244,31 @@
                 try {
                     const objectUrl = await fetchAudioBlob(variant.audioCid, onDownloadProgress);
                     if (!isCurrent()) break; // a newer click on this layer has already taken over
-                    await new Promise((resolve, reject) => {
-                        const canplayTimer = setTimeout(() => reject(new Error('canplay timed out')), 15000);
-                        audioNode.onerror = () => { clearTimeout(canplayTimer); audioNode.onerror = null; reject(new Error('decode failed')); };
-                        audioNode.oncanplay = () => { clearTimeout(canplayTimer); audioNode.oncanplay = null; resolve(); };
-                        audioNode.src = objectUrl;
-                        audioNode.load();
-                    });
+                    await acquireDecodeSlot();
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const canplayTimer = setTimeout(() => reject(new Error('canplay timed out')), 15000);
+                            const cleanup = () => {
+                                clearTimeout(canplayTimer);
+                                audioNode.onerror = null;
+                                audioNode.oncanplay = null;
+                                audioNode.onloadedmetadata = null;
+                            };
+                            audioNode.onerror = () => { cleanup(); reject(new Error('decode failed')); };
+                            // Either event is an acceptable "ready" signal --
+                            // the data is already a fully-downloaded local
+                            // blob (no network left to do), so once metadata
+                            // has loaded, canplay would just be waiting on
+                            // WebKit's own internal readiness bookkeeping,
+                            // which is exactly the part that's been flaky.
+                            audioNode.oncanplay = () => { cleanup(); resolve(); };
+                            audioNode.onloadedmetadata = () => { cleanup(); resolve(); };
+                            audioNode.src = objectUrl;
+                            audioNode.load();
+                        });
+                    } finally {
+                        releaseDecodeSlot();
+                    }
                     if (!isCurrent()) break; // superseded while decoding -- don't resurrect an old variant
                     if (audioNode.duration > state.duration) {
                         state.duration = audioNode.duration;
