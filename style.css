@@ -346,6 +346,7 @@ body.playing .player-gallery-link:hover { opacity: 1; }
    mix overlay's own dark blurred backdrop is what keeps it readable. */
 .mix-tile {
     display: flex; flex-direction: column;
+    position: relative; /* anchors .mix-tile-popover below */
 }
 
 .mix-tile-image {
@@ -380,6 +381,47 @@ body.playing .player-gallery-link:hover { opacity: 1; }
 }
 .mix-tile-lock:hover { background: rgba(0,0,0,0.7); }
 .mix-tile-lock.is-locked { background: rgba(255,180,40,0.85); }
+
+/* Info ("i") button -- recovers the subtitle/variant-count/credit text
+   that the compact mobile grid hides via display:none on .mix-tile-text's
+   children. Hidden on desktop, where that text is already visible inline. */
+.mix-tile-info-btn {
+    display: none;
+    position: absolute; top: 6px; left: 6px; z-index: 2;
+    width: 20px; height: 20px; padding: 0;
+    align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.4);
+    color: #fff; font-family: 'Playfair Display', serif; font-style: italic;
+    font-size: 0.72rem; line-height: 1; cursor: pointer;
+}
+.mix-tile.info-open .mix-tile-info-btn {
+    background: rgba(255,255,255,0.85); color: #000; border-color: #fff;
+}
+
+.mix-tile-popover {
+    position: absolute; z-index: 5;
+    left: 6px; right: 6px; top: 6px;
+    background: rgba(10,8,6,0.94);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    opacity: 0; pointer-events: none; transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.mix-tile.info-open .mix-tile-popover {
+    opacity: 1; pointer-events: auto; transform: translateY(0);
+}
+.mix-tile-popover-heading {
+    font-family: 'Playfair Display', serif; font-style: italic;
+    font-size: 0.72rem; color: #fff; line-height: 1.25; margin-bottom: 4px;
+}
+.mix-tile-popover-variant {
+    font-size: 0.66rem; color: #fff; opacity: 0.9; margin-bottom: 3px;
+}
+.mix-tile-popover-credit {
+    font-size: 0.6rem; color: #fff; opacity: 0.75; line-height: 1.3;
+}
 
 .mix-tile-text {
     display: flex; flex-direction: column;
@@ -700,12 +742,21 @@ body.playing .player-gallery-link:hover { opacity: 1; }
         gap: 5px;
     }
     .mix-tile { height: 100%; min-height: 0; }
-    .mix-tile-image { flex: 1; min-height: 0; aspect-ratio: auto; }
+    /* The base tile uses background-size:contain (shows the whole cover,
+       letterboxed) which was designed for a square tile. Here the tile is
+       taller than it is wide (filling a grid row instead of a fixed square),
+       so "contain" left dark bars above/below every image -- cover fills
+       the box completely instead, at the cost of a little edge cropping. */
+    .mix-tile-image { flex: 1; min-height: 0; aspect-ratio: auto; background-size: cover; }
     .mix-tile-text { padding: 3px 2px 0; }
     .mix-tile-subtitle, .mix-tile-credit, .mix-tile-count { display: none; }
     .mix-tile-name { font-size: 0.66rem; }
     .mix-tile-variant { margin-top: 1px; }
     .mix-tile-variant span:first-child { font-size: 0.6rem; }
+
+    /* The subtitle/variant-count/credit text hidden above is still
+       reachable -- tap the "i" button to pop it back up over the tile. */
+    .mix-tile-info-btn { display: flex; }
 
     /* Buttons stay in a single horizontal row instead of stacking. */
     .mix-actions {

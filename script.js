@@ -868,6 +868,25 @@
             });
             image.appendChild(lockBtn);
 
+            // Info: only shown in the compact mobile grid, where subtitle/
+            // variant-count/credit are hidden from the tile itself to keep
+            // all 9 tiles fitting on one screen without scrolling. Tapping
+            // it surfaces exactly that same text in a small floating card
+            // instead of just dropping it. Invisible/inert on wider
+            // layouts, where that text is already shown inline.
+            const infoBtn = document.createElement('button');
+            infoBtn.type = 'button';
+            infoBtn.className = 'mix-tile-info-btn';
+            infoBtn.setAttribute('aria-label', `${layer.name} details`);
+            infoBtn.textContent = 'i';
+            infoBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const nowOpen = !tile.classList.contains('info-open');
+                document.querySelectorAll('.mix-tile.info-open').forEach(t => t.classList.remove('info-open'));
+                if (nowOpen) tile.classList.add('info-open');
+            });
+            image.appendChild(infoBtn);
+
             const loader = document.createElement('div');
             loader.className = 'mix-tile-loader';
             const loaderFill = document.createElement('div');
@@ -911,6 +930,30 @@
             }
 
             tile.appendChild(text);
+
+            // Same info as above, duplicated into the floating card the
+            // info button opens -- kept separate from `text` above so it
+            // can be positioned as an overlay (not counted in the grid's
+            // own height) and shown only via .info-open, not tied to the
+            // same hidden/shown rules as the inline copy.
+            const popover = document.createElement('div');
+            popover.className = 'mix-tile-popover';
+            const popHeading = document.createElement('div');
+            popHeading.className = 'mix-tile-popover-heading';
+            popHeading.textContent = layer.subtitle ? `${layer.name} — ${layer.subtitle}` : layer.name;
+            popover.appendChild(popHeading);
+            const popVariant = document.createElement('div');
+            popVariant.className = 'mix-tile-popover-variant';
+            popVariant.textContent = `${variant.label}  ·  ${idx + 1}/${layer.variants.length}`;
+            popover.appendChild(popVariant);
+            if (variant.credit) {
+                const popCredit = document.createElement('div');
+                popCredit.className = 'mix-tile-popover-credit';
+                popCredit.textContent = variant.credit;
+                popover.appendChild(popCredit);
+            }
+            tile.appendChild(popover);
+
             UI.mixGrid.appendChild(tile);
         });
     }
@@ -1210,6 +1253,16 @@
         return results.map(r => r.ok);
     }
 
+    // Used to nudge a drifted layer's playbackRate by a fraction of its
+    // drift every 600ms, to ease it back into sync smoothly instead of
+    // jumping. On iOS Safari in particular, changing playbackRate on an
+    // <audio> element causes its own small audible glitch/click -- doing
+    // that to up to 8 layers every 600ms was, in practice, a constant
+    // stutter roughly once a second, worse than the drift it was meant to
+    // fix invisibly. playbackRate is no longer touched at all: each layer
+    // just stays at 1x and gets a single clean hard-snap back to the
+    // master's position whenever it's actually drifted enough to matter --
+    // occasional and audible as one small jump, rather than continuous.
     function enforceSync() {
         if (state.isSeeking) return;
         const nodes = Object.values(state.audioPool).filter(n => !n.paused && n.src);
@@ -1218,14 +1271,10 @@
         const master = nodes[0];
         nodes.forEach((node, i) => {
             if (i === 0) return;
+            if (node.playbackRate !== 1) node.playbackRate = 1;
             const drift = node.currentTime - master.currentTime;
-
-            if (Math.abs(drift) > 0.4) {
+            if (Math.abs(drift) > 0.15) {
                 node.currentTime = master.currentTime;
-            } else if (Math.abs(drift) > 0.03) {
-                node.playbackRate = master.playbackRate - (drift * 0.5);
-            } else {
-                node.playbackRate = 1.0;
             }
         });
     }
@@ -2023,6 +2072,14 @@
         if (UI.previewLightbox && UI.previewLightbox.classList.contains('open')) closeLightbox();
         else if (UI.nameMixModal && UI.nameMixModal.classList.contains('open')) closeNameModal();
         else if (UI.mixInfoModal && UI.mixInfoModal.classList.contains('open')) closeMixInfoModal();
+    });
+
+    // A tap anywhere outside a tile's own info button/popover closes it --
+    // one delegated listener rather than one per tile, since renderMixGrid
+    // rebuilds the grid (and every tile in it) on each change.
+    document.addEventListener('click', (e) => {
+        if (e.target.closest && e.target.closest('.mix-tile-info-btn, .mix-tile-popover')) return;
+        document.querySelectorAll('.mix-tile.info-open').forEach(t => t.classList.remove('info-open'));
     });
 
     // Editable mix title above the preview -- typed live into state so the
