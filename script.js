@@ -484,9 +484,33 @@
         const tokens = {};
         ids.forEach(id => { tokens[id] = bumpLayerToken(id); });
         updateNowLoadingInfo(changedIds, tokens);
-        if (UI.nowLoading) UI.nowLoading.classList.remove('hidden');
+
+        // The mix overlay sits ABOVE everything else (z-index 50) while
+        // open, so the corner "now loading" indicator is invisible behind
+        // it -- picking layers there needs its own, visible feedback in
+        // the panel itself instead, with Play/Resume and Shuffle held off
+        // until this batch is actually ready (Stop and Gallery stay live,
+        // same "never trap someone here" rule as the first load).
+        const overlayOpen = !!(UI.mixOverlay && UI.mixOverlay.classList.contains('open'));
+        if (overlayOpen) {
+            if (UI.overlayLoadingFill) UI.overlayLoadingFill.style.width = '0%';
+            if (UI.overlayLoadingText) UI.overlayLoadingText.textContent = '0%';
+            if (UI.overlayLoading) UI.overlayLoading.classList.remove('hidden');
+            if (UI.overlayPlayBtn) UI.overlayPlayBtn.disabled = true;
+            if (UI.shuffleAllBtn) UI.shuffleAllBtn.disabled = true;
+        } else {
+            if (UI.nowLoading) UI.nowLoading.classList.remove('hidden');
+        }
+
         await loadAudioStreams(tokens);
-        if (UI.nowLoading) UI.nowLoading.classList.add('hidden');
+
+        if (overlayOpen) {
+            if (UI.overlayLoading) UI.overlayLoading.classList.add('hidden');
+            if (UI.overlayPlayBtn) UI.overlayPlayBtn.disabled = false;
+            if (UI.shuffleAllBtn) UI.shuffleAllBtn.disabled = false;
+        } else {
+            if (UI.nowLoading) UI.nowLoading.classList.add('hidden');
+        }
     }
 
     // The very first load (nothing playing yet, mix overlay still open):
@@ -1710,8 +1734,8 @@
 
     function syncOverlayButtons() {
         if (UI.overlayPlayBtn) {
-            UI.overlayPlayBtn.textContent = (state.hasStartedPlaying && state.isStopped === false && !state.isPlaying)
-                ? 'Resume'
+            UI.overlayPlayBtn.textContent = state.isPlaying
+                ? 'Done'
                 : (state.hasStartedPlaying ? 'Resume' : 'Play');
         }
         if (UI.overlayStopBtn) {
@@ -1853,13 +1877,12 @@
         });
     }
 
-    // Dedicated "change layers" button in the transport dock -- pauses (if
-    // playing) and brings up the mix overlay without stopping playback
-    // position, so the listener can audition a different mix before
-    // committing.
+    // Dedicated "change layers" button in the transport dock -- brings up
+    // the mix overlay without touching playback at all, so whatever's
+    // already playing keeps playing behind the glass while a new mix is
+    // auditioned (reloadAudioIfPlaying only swaps it in once it's ready).
     if (UI.layersBtn) {
         UI.layersBtn.addEventListener('click', () => {
-            if (state.isPlaying) pauseAudio();
             openMixOverlay();
         });
     }
@@ -1887,6 +1910,13 @@
 
     if (UI.overlayPlayBtn) {
         UI.overlayPlayBtn.addEventListener('click', async () => {
+            if (UI.overlayPlayBtn.disabled) return; // a mix is still staging -- guarded visually too
+            // Opened via "change layers" while already playing -- nothing
+            // was paused, so there's nothing to resume; just dismiss.
+            if (state.isPlaying) {
+                closeMixOverlay();
+                return;
+            }
             if (!state.hasStartedPlaying) {
                 await runFirstLoadWithProgress();
                 state.hasStartedPlaying = true;

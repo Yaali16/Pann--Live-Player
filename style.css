@@ -158,6 +158,13 @@ body.playing .bg-layer-cover { animation-play-state: running; }
 }
 .secondary-btn:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.45); }
 
+/* A mix is still staging (new artwork/audio warming up) -- these buttons
+   commit to it, so they visibly go inert until it's ready, instead of
+   just silently ignoring clicks. */
+.primary-btn:disabled, .secondary-btn:disabled {
+    opacity: 0.45; cursor: default; pointer-events: none; transform: none;
+}
+
 .artists-section { margin-top: 0.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,0.12); display: flex; flex-direction: column; align-items: center; gap: 1rem; }
 .gateway-tags {
     display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
@@ -283,7 +290,7 @@ body.playing .player-gallery-link:hover { opacity: 1; }
    one didn't. Flat, square-edged throughout: no rounded corners. */
 .mix-layout {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 1.15fr);
     gap: clamp(1.5rem, 4vw, 3rem);
     align-items: start;
     width: 100%;
@@ -646,27 +653,87 @@ body.playing .player-gallery-link:hover { opacity: 1; }
 .modal-layer-credit { display: block; font-size: 0.68rem; color: rgba(255,255,255,0.45); text-align: right; }
 
 @media (max-width: 860px) {
-    /* Preview stacks above the picker instead of sitting beside it, so a
-       narrow viewport still shows both without either being squeezed.
-       Single column now, so the two no longer share a grid row to stretch
-       against -- give the preview back an explicit square here. */
-    .mix-layout { grid-template-columns: 1fr; }
-    .mix-preview-col { order: -1; margin: 0 auto 1rem; width: min(100%, 320px); }
-    .formation-preview { flex: none; aspect-ratio: 1 / 1; }
-}
+    /* Below this width the panel has to fit entirely within one screen,
+       no scrolling -- so instead of a preview stacked above a
+       naturally-tall 3x3 grid, the whole overlay becomes a fixed-height
+       flex column (title+preview row, then the grid, then the loading
+       readout and action buttons) and the grid's row heights flex to
+       fill whatever's left, rather than each tile forcing a 1:1 square
+       regardless of space. */
+    .mix-overlay {
+        height: 100vh; height: 100dvh;
+        overflow: hidden;
+        padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+        /* A full 28px backdrop blur is one of the heavier things a phone
+           GPU is asked to do every frame this panel is open; a lighter
+           blur reads almost the same but costs noticeably less. */
+        -webkit-backdrop-filter: blur(16px) saturate(1.1);
+        backdrop-filter: blur(16px) saturate(1.1);
+    }
+    .mix-overlay-inner {
+        height: 100%; max-height: 100%;
+        display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .mix-layout {
+        grid-template-columns: 1fr;
+        display: flex; flex-direction: column; gap: 0.5rem;
+        flex: 1; min-height: 0; width: 100%;
+    }
 
-@media (max-width: 768px) {
+    /* Title + a small thumbnail side by side, instead of a big square
+       preview eating a whole row of its own. */
+    .mix-preview-col {
+        order: -1; position: static; align-self: stretch;
+        flex: 0 0 auto; width: 100%;
+        flex-direction: row; align-items: center; gap: 10px;
+    }
+    .preview-titlebar { flex: 1; min-width: 0; order: 1; }
+    .formation-preview { order: 0; flex: 0 0 auto; width: 21vw; max-width: 110px; min-width: 64px; }
+
+    /* The grid fills whatever vertical space is left: each row gets an
+       equal share of that space rather than an aspect-ratio-square width,
+       so 9 tiles always fit without scrolling. */
+    .mix-selector-col { flex: 1; min-height: 0; }
+    .mix-grid {
+        height: 100%;
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+    }
+    .mix-tile { height: 100%; min-height: 0; }
+    .mix-tile-image { flex: 1; min-height: 0; aspect-ratio: auto; }
+    .mix-tile-text { padding: 3px 2px 0; }
+    .mix-tile-subtitle, .mix-tile-credit, .mix-tile-count { display: none; }
+    .mix-tile-name { font-size: 0.66rem; }
+    .mix-tile-variant { margin-top: 1px; }
+    .mix-tile-variant span:first-child { font-size: 0.6rem; }
+
+    /* Buttons stay in a single horizontal row instead of stacking. */
+    .mix-actions {
+        flex: 0 0 auto; flex-direction: row; flex-wrap: wrap;
+        gap: 0.5rem; margin-top: 0;
+    }
+    .mix-actions button {
+        flex: 1 1 auto; min-width: 0;
+        padding: 0.65rem 0.5rem; font-size: 0.7rem; letter-spacing: 1px;
+        white-space: nowrap;
+    }
+    .overlay-loading { flex: 0 0 auto; margin-top: 0; }
+
     .gateway-content h1 { font-size: 3rem; }
     .buttons-row { gap: 1.25rem; }
     .control-panel { padding: 1rem; }
-    .mix-actions { flex-direction: column; }
-    .mix-actions button { width: 100%; }
-    .mix-overlay { padding: 14px; }
-    .mix-overlay-inner { padding-bottom: 1rem; }
 }
 
-@media (max-width: 420px) {
-    .mix-preview-col { width: min(100%, 220px); }
+@media (max-width: 480px) {
+    .mix-overlay-inner { gap: 0.35rem; }
+    .mix-layout { gap: 0.35rem; }
+    .mix-grid { gap: 3px; }
+    .formation-preview { width: 18vw; max-width: 84px; min-width: 52px; }
+    .mix-tile-name { font-size: 0.6rem; }
+    .mix-tile-variant span:first-child { font-size: 0.55rem; }
+    .mix-title-input { font-size: 0.85rem; }
+    .mix-actions button { padding: 0.55rem 0.4rem; font-size: 0.62rem; letter-spacing: 0.5px; }
+    .overlay-loading-text { font-size: 12px; min-width: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
