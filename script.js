@@ -123,7 +123,8 @@
     }
 
     // ---------------------------------------------------------------------
-    // Audio: whole-file fetch, cached per CID
+    // Audio: whole-file fetch, cached per CID (in memory) and per CID again
+    // on disk (Cache Storage) so it survives a reload -- see fetchAudioBlob.
     // ---------------------------------------------------------------------
     // pann.mypinata.cloud (and its fallbacks) send the wrong content-type
     // on every range request after a file's first, which broke streaming
@@ -131,9 +132,7 @@
     // seeking, since a seek always issues a fresh range request. Fetching
     // each variant whole with a plain fetch() has no range requests, so
     // the bug never triggers, and once loaded, seeking is purely local
-    // (no network at all). Caching the resulting blob URL by CID means a
-    // variant is only ever downloaded once per session -- repeat
-    // shuffles back to an already-played variant cost nothing.
+    // (no network at all).
     // Reads a fetch() response's body as a stream instead of res.blob(), so
     // real byte progress (0..1) can be reported as chunks arrive -- this is
     // what drives the actual 0-100% fill on each tile and the overlay bar,
@@ -143,6 +142,11 @@
     // connection that's still receiving data (just slow) is never killed,
     // but one that's gone completely silent is aborted after
     // `stallTimeoutMs` instead of hanging forever.
+    // Returns both the playable object URL AND a clone of the raw response
+    // -- the caller (fetchAudioBlob) persists that clone to the on-disk
+    // cache; a Response body can only be read once, so it has to be cloned
+    // here, before either the whole-blob or the streaming read below
+    // consumes the original.
     async function fetchBlobAsObjectUrl(src, onProgress, stallTimeoutMs = 20000) {
         const controller = new AbortController();
         let timer;
@@ -154,12 +158,13 @@
         try {
             const res = await fetch(src, { signal: controller.signal });
             if (!res.ok) throw new Error(`${res.status} on ${src}`);
+            const forCache = res.clone();
             const total = Number(res.headers.get('content-length')) || 0;
             if (!res.body || !total || !res.body.getReader) {
                 const blob = await res.blob();
                 clearTimeout(timer);
                 if (onProgress) onProgress(1);
-                return URL.createObjectURL(blob);
+                return { objectUrl: URL.createObjectURL(blob), response: forCache };
             }
             const reader = res.body.getReader();
             const chunks = [];
@@ -182,10 +187,48 @@
             }
             clearTimeout(timer);
             if (onProgress) onProgress(1); // now it's actually, truly done
-            return URL.createObjectURL(new Blob(chunks));
+            return { objectUrl: URL.createObjectURL(new Blob(chunks)), response: forCache };
         } finally {
             clearTimeout(timer);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Persistent (on-disk) media cache
+    // ---------------------------------------------------------------------
+    // audioBlobCache below is only ever in memory -- a page reload wipes
+    // it, so every fresh visit re-downloaded the whole current mix from
+    // the gateway again, no matter how much had already been explored in
+    // an earlier session. Every stem here is addressed by its IPFS CID,
+    // which is a hash of its own bytes -- the same CID can never resolve
+    // to different content -- so there's no staleness question at all: a
+    // cache entry found for a CID is always still correct, forever, and
+    // never needs revalidating against the network. That makes the
+    // browser's Cache Storage API (normally used by service workers, but
+    // just as usable directly from the page) a safe cache-forever store
+    // for this: once downloaded, a stem never has to leave the device
+    // again. Keyed by a synthetic per-CID request rather than the actual
+    // gateway URL that served it, so a hit found via a fallback gateway
+    // today is still found even if the primary gateway is asked first
+    // tomorrow.
+    const MEDIA_CACHE_NAME = 'pann-media-v1';
+    function mediaCacheKey(cid) {
+        return new Request('https://pann-media.local/audio/' + encodeURIComponent(cid));
+    }
+    async function readMediaCache(cid) {
+        if (typeof caches === 'undefined' || !caches.open) return null;
+        try {
+            const cache = await caches.open(MEDIA_CACHE_NAME);
+            return (await cache.match(mediaCacheKey(cid))) || null;
+        } catch (e) {
+            return null; // Cache Storage unavailable (private mode, etc.) -- just skip it
+        }
+    }
+    function writeMediaCache(cid, response) {
+        if (typeof caches === 'undefined' || !caches.open) return;
+        caches.open(MEDIA_CACHE_NAME)
+            .then((cache) => cache.put(mediaCacheKey(cid), response))
+            .catch(() => { /* quota exceeded or blocked -- playback already worked either way */ });
     }
 
     // Per-layer generation counter: whenever a layer's selected variant
@@ -204,7 +247,7 @@
         return layerToken[id];
     }
 
-    const audioBlobCache = new Map(); // cid -> Promise<objectURL>
+    const audioBlobCache = new Map(); // cid -> Promise<objectURL>, this tab only
     // `onProgress` only fires for the caller that actually triggers the
     // fetch (a cache miss); a second caller awaiting an already-in-flight
     // or already-cached fetch just sees it jump straight to 1 -- fine in
@@ -217,12 +260,25 @@
             return audioBlobCache.get(cid);
         }
 
-        const promise = acquireLoadSlot().then(async () => {
+        const promise = (async () => {
+            // Checked before the load-concurrency gate, and before touching
+            // the network at all -- a disk-cache hit costs nothing and
+            // shouldn't have to wait in line behind in-flight downloads.
+            const cached = await readMediaCache(cid);
+            if (cached) {
+                if (onProgress) onProgress(1);
+                const blob = await cached.blob();
+                return URL.createObjectURL(blob);
+            }
+
+            await acquireLoadSlot();
             try {
                 let lastErr;
                 for (const src of buildCandidates(cid)) {
                     try {
-                        return await fetchBlobAsObjectUrl(src, onProgress);
+                        const { objectUrl, response } = await fetchBlobAsObjectUrl(src, onProgress);
+                        writeMediaCache(cid, response); // fire-and-forget; never blocks playback on it
+                        return objectUrl;
                     } catch (e) {
                         lastErr = e;
                     }
@@ -231,7 +287,7 @@
             } finally {
                 releaseLoadSlot();
             }
-        });
+        })();
         // On failure, drop the cache entry so a later retry (e.g. next
         // shuffle back to this variant) gets a fresh attempt instead of
         // being stuck on a cached rejection.
