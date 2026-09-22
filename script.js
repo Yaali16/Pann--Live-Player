@@ -142,11 +142,18 @@
     // connection that's still receiving data (just slow) is never killed,
     // but one that's gone completely silent is aborted after
     // `stallTimeoutMs` instead of hanging forever.
-    // Returns both the playable object URL AND a clone of the raw response
-    // -- the caller (fetchAudioBlob) persists that clone to the on-disk
-    // cache; a Response body can only be read once, so it has to be cloned
-    // here, before either the whole-blob or the streaming read below
-    // consumes the original.
+    // Returns the playable object URL AND the raw blob (so the caller,
+    // fetchAudioBlob, can persist that same blob to the on-disk cache).
+    // Earlier this cloned the fetch Response up front (res.clone()) and
+    // handed the clone to the cache separately -- but Safari/iOS has to
+    // fully buffer a cloned response internally to keep both branches
+    // readable, and for whole audio files (several MB each, several
+    // layers at once) that buffering appears to stall the *original*
+    // stream's reader before it ever reaches "done", which is exactly the
+    // "stuck at 92%, never finishes" symptom seen on iPad. Building the
+    // cache entry from the already-collected blob afterward (below, in
+    // writeMediaCache) needs no clone and no second concurrent read of
+    // the same network stream, so that failure mode can't happen.
     async function fetchBlobAsObjectUrl(src, onProgress, stallTimeoutMs = 20000) {
         const controller = new AbortController();
         let timer;
@@ -158,13 +165,13 @@
         try {
             const res = await fetch(src, { signal: controller.signal });
             if (!res.ok) throw new Error(`${res.status} on ${src}`);
-            const forCache = res.clone();
+            const contentType = res.headers.get('content-type') || '';
             const total = Number(res.headers.get('content-length')) || 0;
             if (!res.body || !total || !res.body.getReader) {
                 const blob = await res.blob();
                 clearTimeout(timer);
                 if (onProgress) onProgress(1);
-                return { objectUrl: URL.createObjectURL(blob), response: forCache };
+                return { objectUrl: URL.createObjectURL(blob), blob, contentType };
             }
             const reader = res.body.getReader();
             const chunks = [];
@@ -187,7 +194,8 @@
             }
             clearTimeout(timer);
             if (onProgress) onProgress(1); // now it's actually, truly done
-            return { objectUrl: URL.createObjectURL(new Blob(chunks)), response: forCache };
+            const blob = new Blob(chunks, contentType ? { type: contentType } : undefined);
+            return { objectUrl: URL.createObjectURL(blob), blob, contentType };
         } finally {
             clearTimeout(timer);
         }
@@ -224,11 +232,15 @@
             return null; // Cache Storage unavailable (private mode, etc.) -- just skip it
         }
     }
-    function writeMediaCache(cid, response) {
+    function writeMediaCache(cid, blob, contentType) {
         if (typeof caches === 'undefined' || !caches.open) return;
-        caches.open(MEDIA_CACHE_NAME)
-            .then((cache) => cache.put(mediaCacheKey(cid), response))
-            .catch(() => { /* quota exceeded or blocked -- playback already worked either way */ });
+        try {
+            const headers = contentType ? { 'Content-Type': contentType } : undefined;
+            const response = new Response(blob, headers ? { headers } : undefined);
+            caches.open(MEDIA_CACHE_NAME)
+                .then((cache) => cache.put(mediaCacheKey(cid), response))
+                .catch(() => { /* quota exceeded or blocked -- playback already worked either way */ });
+        } catch (e) { /* constructing the cache Response failed -- skip caching, never affects playback */ }
     }
 
     // Per-layer generation counter: whenever a layer's selected variant
@@ -276,8 +288,8 @@
                 let lastErr;
                 for (const src of buildCandidates(cid)) {
                     try {
-                        const { objectUrl, response } = await fetchBlobAsObjectUrl(src, onProgress);
-                        writeMediaCache(cid, response); // fire-and-forget; never blocks playback on it
+                        const { objectUrl, blob, contentType } = await fetchBlobAsObjectUrl(src, onProgress);
+                        writeMediaCache(cid, blob, contentType); // fire-and-forget; never blocks playback on it
                         return objectUrl;
                     } catch (e) {
                         lastErr = e;

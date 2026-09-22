@@ -11,7 +11,19 @@
 // fixed set of files that make up the page itself, so the player keeps
 // working offline once it's been opened before -- it never intercepts
 // anything going to the IPFS gateways.
-const CACHE_NAME = 'pann-shell-v1';
+//
+// The fetch handler below is deliberately network-FIRST, not cache-first.
+// An earlier version served the cached app shell before ever touching the
+// network, which is what "installable offline" usually means -- but it
+// also meant that once a phone had this page open once, every css/js/html
+// fix pushed afterward was invisible on that phone forever: the browser
+// only re-checks sw.js itself for changes (byte-for-byte), and this file's
+// own bytes don't change just because index.html/style.css/script.js did,
+// so the old service worker kept quietly serving its old cached copies of
+// those files on every visit, install prompts and all. Network-first
+// fixes that -- every visit with a connection gets the live files, and the
+// cache is only ever a fallback for the rare case of no network at all.
+const CACHE_NAME = 'pann-shell-v2';
 const APP_SHELL = [
     './',
     'index.html',
@@ -57,6 +69,15 @@ self.addEventListener('fetch', (event) => {
     // through untouched, exactly as if no service worker existed.
     if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
     event.respondWith(
-        caches.match(event.request).then((cached) => cached || fetch(event.request))
+        fetch(event.request)
+            .then((response) => {
+                // Keep the offline fallback cache up to date with whatever
+                // the network just served, so offline mode never lags too
+                // far behind what people have actually been using.
+                const copy = response.clone();
+                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+                return response;
+            })
+            .catch(() => caches.match(event.request))
     );
 });
